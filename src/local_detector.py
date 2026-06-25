@@ -15,11 +15,24 @@ TARGET_OBJECTS = [
     "package",
 ]
 
-# Tuning Knobs
-CHECK_FPS = 3  # Look at 3 frames per second (very fast)
-CONFIDENCE_THRESHOLD = 0.15  # YOLO-World works best with lower confidence thresholds
-MIN_HOLD_SECONDS = 0.8  # Object must be in frame this long to be a transaction
-GRACE_PERIOD_SEC = 0.5  # If camera loses object for <0.5s due to motion blur, ignore the drop
+# --- Tuning Knobs ---
+# These values are based on the original working version of the script and are now
+# properly connected to the analysis logic.
+
+# How many frames to check per second of video.
+CHECK_FPS = 3
+
+# Confidence required to start tracking an object ("blurry" detection).
+CONF_BLURRY = 0.06
+# Confidence required to "lock on" and confirm a transaction.
+CONF_CRISP = 0.21
+# If an object is seen with `CONF_BLURRY` but doesn't become `CONF_CRISP` within this
+# duration, the potential detection is discarded.
+MAX_AF_DELAY_SEC = 1.2
+# If the camera loses a locked object for less than this duration, ignore the drop.
+GRACE_PERIOD_SEC = 0.5
+# An object must take up this much of the screen (0.0 to 1.0) to be considered.
+MIN_SCREEN_AREA = 0.08
 
 
 def format_timestamp(seconds: float) -> str:
@@ -28,8 +41,8 @@ def format_timestamp(seconds: float) -> str:
     return f"{hours:02d}:{mins:02d}:{secs:02d}"
 
 
-def get_best_gated_confidence(results, min_screen_percent=0.08) -> float:
-    """Finds the highest confidence of any valid object taking up >8% of the screen."""
+def get_best_gated_confidence(results, min_screen_percent: float) -> float:
+    """Finds the highest confidence of any valid object taking up a minimum screen area."""
     best_conf = 0.0
 
     for box in results.boxes:
@@ -51,56 +64,53 @@ def analyze_clip(video_path: Path, model) -> list[str]:
     # Grab total frame count to calculate percentages
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
-    if native_fps <= 0:
+    if native_fps <= 0 or total_frames <= 0:
+        cap.release()
         return []
 
-    total_duration_sec = total_frames / native_fps if total_frames > 0 else 0
-    step = max(1, int(native_fps / 4))
-
-    CONF_BLURRY = 0.06
-    CONF_CRISP = 0.21
-    MAX_AF_DELAY_SEC = 1.2
-    DROP_GRACE_SEC = 0.5
+    total_duration_sec = total_frames / native_fps
+    step = max(1, int(native_fps / CHECK_FPS))
 
     timestamps = []
     state = "IDLE"
-    warmup_start_ts = 0.0
+    detection_start_ts = 0.0
     last_seen_ts = 0.0
 
     frame_idx = 0
 
     while cap.isOpened():
-        success, frame = cap.read()
-        if not success:
-            break
-
+        # This loop efficiently skips frames by using cap.grab() for frames we don't
+        # need, and cap.read() only for frames we analyze.
         if frame_idx % step == 0:
+            success, frame = cap.read()
+            if not success:
+                break
+
             now_sec = frame_idx / native_fps
 
             # --- PROGRESS BAR PRINTING ---
-            if total_frames > 0:
-                pct = (frame_idx / total_frames) * 100
-                progress_str = f"{pct:5.1f}% | {format_timestamp(now_sec)} / {format_timestamp(total_duration_sec)}"
-            else:
-                # Fallback just in case you are testing via Live Webcam (which has infinite frames)
-                progress_str = f"LIVE | {format_timestamp(now_sec)}"
+            pct = (frame_idx / total_frames) * 100
+            progress_str = (
+                f"{pct:5.1f}% | {format_timestamp(now_sec)} / {format_timestamp(total_duration_sec)}"
+            )
 
-            # The '\r' pulls the cursor back; '<10' pads the word IDLE/LOCKED with spaces so it doesn't leave ghost characters
+            # The '\r' pulls the cursor back; '<10' pads the word IDLE/LOCKED with spaces
             print(
                 f"\r   -> [{progress_str}] | AI State: {state:<10}",
                 end="",
                 flush=True,
             )
 
+            # --- AI ANALYSIS & STATE MACHINE ---
             results = model.predict(frame, device=0, half=True, verbose=False)[0]
             current_conf = get_best_gated_confidence(
-                results, min_screen_percent=0.08
+                results, min_screen_percent=MIN_SCREEN_AREA
             )
 
             if state == "IDLE":
                 if current_conf >= CONF_BLURRY:
                     state = "WARMING_UP"
-                    warmup_start_ts = now_sec
+                    detection_start_ts = now_sec
                     last_seen_ts = now_sec
 
             elif state == "WARMING_UP":
@@ -109,24 +119,30 @@ def analyze_clip(video_path: Path, model) -> list[str]:
                     last_seen_ts = now_sec
                 elif current_conf >= CONF_BLURRY:
                     last_seen_ts = now_sec
-                    if (now_sec - warmup_start_ts) > MAX_AF_DELAY_SEC:
+                    # If it stays blurry for too long, give up
+                    if (now_sec - detection_start_ts) > MAX_AF_DELAY_SEC:
                         state = "IDLE"
-                else:
-                    if (now_sec - last_seen_ts) > DROP_GRACE_SEC:
-                        state = "IDLE"
+                else:  # Lost sight of a blurry object
+                    state = "IDLE"
 
             elif state == "LOCKED":
-                if current_conf >= CONF_BLURRY:
+                if current_conf >= CONF_BLURRY:  # As long as it's at least blurry, hold lock
                     last_seen_ts = now_sec
                 else:
-                    if (now_sec - last_seen_ts) > DROP_GRACE_SEC:
-                        timestamps.append(format_timestamp(warmup_start_ts))
+                    # If we lose the lock, check if it was a temporary drop
+                    if (now_sec - last_seen_ts) > GRACE_PERIOD_SEC:
+                        timestamps.append(format_timestamp(detection_start_ts))
                         state = "IDLE"
+        else:
+            # Faster path: only grab the frame to advance the stream, don't decode.
+            success = cap.grab()
+            if not success:
+                break
 
         frame_idx += 1
 
     if state == "LOCKED":
-        timestamps.append(format_timestamp(warmup_start_ts))
+        timestamps.append(format_timestamp(detection_start_ts))
 
     # Print a single empty line at the very end so the next print() doesn't overwrite our 100% mark
     print()
