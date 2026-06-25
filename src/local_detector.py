@@ -1,4 +1,5 @@
 import json
+import time
 import cv2
 from pathlib import Path
 from ultralytics import YOLOWorld
@@ -172,8 +173,12 @@ def main():
 
     for video in video_files:
         print(f"Scanning: {video.name}...")
-        results[video.name] = analyze_clip(video, model)
-        print(f"  Found {len(results[video.name])} transaction(s).")
+        start_time = time.perf_counter()
+        timestamps = analyze_clip(video, model)
+        end_time = time.perf_counter()
+        duration = end_time - start_time
+        results[video.name] = timestamps
+        print(f"  Found {len(timestamps)} transaction(s) in {duration:.2f} seconds.")
 
     with open(OUTPUT_JSON, "w") as f:
         json.dump(results, f, indent=4)
