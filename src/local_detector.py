@@ -1,19 +1,19 @@
+import os
 import json
+import time
 import cv2
 from pathlib import Path
-from ultralytics import YOLOWorld
+from ultralytics import YOLO
 
 # --- CONFIGURATION ---
-VIDEO_DIR = Path("../videos")
-OUTPUT_JSON = Path("./transactions.json")
+# The path to your video files is hardcoded below.
+VIDEO_DIR = Path("J:/Vending Videos/2026_06_20_Guildford")
+OUTPUT_DIR = VIDEO_DIR  # The output directory is now the same as the video directory.
+OUTPUT_JSON = OUTPUT_DIR / "transactions.json"
 
-# Type literally whatever nouns you want the AI to look for:
-TARGET_OBJECTS = [
-    "card",
-    "box",
-    "cardboard box",
-    "package",
-]
+# --- MODEL CONFIGURATION ---
+# Point this to the ONNX model you created with the 'bake_onnx.py' script.
+ONNX_MODEL_PATH = "yolov8s_finetuned.onnx"
 
 # --- Tuning Knobs ---
 # These values are based on the original working version of the script and are now
@@ -31,7 +31,7 @@ CONF_CRISP = 0.21
 MAX_AF_DELAY_SEC = 1.2
 # If the camera loses a locked object for less than this duration, ignore the drop.
 GRACE_PERIOD_SEC = 0.5
-# An object must take up this much of the screen (0.0 to 1.0) to be considered.
+# An object must take up this much of the screen (`0.0` to `1.0`) to be considered.
 MIN_SCREEN_AREA = 0.08
 
 
@@ -102,7 +102,8 @@ def analyze_clip(video_path: Path, model) -> list[str]:
             )
 
             # --- AI ANALYSIS & STATE MACHINE ---
-            results = model.predict(frame, device=0, half=True, verbose=False)[0]
+            # For ONNX models, device and half are handled by the runtime/model file.
+            results = model.predict(frame, verbose=False)[0]
             current_conf = get_best_gated_confidence(
                 results, min_screen_percent=MIN_SCREEN_AREA
             )
@@ -152,14 +153,36 @@ def analyze_clip(video_path: Path, model) -> list[str]:
 
 
 def main():
-    print("Loading YOLO-World...")
-    # 's' stands for Small. Fast on local CPUs.
-    model = YOLOWorld("yolov8s-world.pt")
+    # Change CWD to the script's directory. This ensures that the JSON output
+    # and any downloaded model weights (like yolov8s-world.pt) are placed
+    # inside the 'src' directory, rather than the project root.
+    script_dir = Path(__file__).parent.resolve()
+    onnx_model_path = script_dir / ONNX_MODEL_PATH
 
-    # This is the magic line: overriding the AI's brain with your custom nouns
-    model.set_classes(TARGET_OBJECTS)
+    if not onnx_model_path.exists():
+        print(f"ERROR: Model file not found at '{onnx_model_path}'")
+        print("Please run the `train.py` and `bake_onnx.py` scripts first to create it.")
+        return
 
+    print(f"Loading fine-tuned ONNX model: {onnx_model_path.name}")
+    # By loading the .onnx file directly, ultralytics will automatically use
+    # the ONNX Runtime backend. For AMD GPUs on Windows, it will use DirectML.
+    model = YOLO(onnx_model_path)
+
+    # The model now inherently knows what objects to look for from its training.
+    # The `TARGET_OBJECTS` list and `set_classes` method are no longer needed.
+
+    # Load existing results if the file exists, so we can resume.
     results = {}
+    if OUTPUT_JSON.exists():
+        try:
+            with open(OUTPUT_JSON, "r") as f:
+                results = json.load(f)
+            print(f"Loaded {len(results)} existing results from {OUTPUT_JSON}")
+        except (json.JSONDecodeError, IOError):
+            print(f"Warning: Could not read or parse {OUTPUT_JSON}. Starting fresh.")
+            results = {}
+
     video_files = [
         p
         for p in VIDEO_DIR.iterdir()
@@ -171,14 +194,25 @@ def main():
         return
 
     for video in video_files:
+        if video.name in results:
+            print(f"Skipping already processed video: {video.name}")
+            continue
+
         print(f"Scanning: {video.name}...")
-        results[video.name] = analyze_clip(video, model)
-        print(f"  Found {len(results[video.name])} transaction(s).")
+        start_time = time.perf_counter()
+        timestamps = analyze_clip(video, model)
+        end_time = time.perf_counter()
+        duration = end_time - start_time
+        results[video.name] = timestamps
+        print(f"  Found {len(timestamps)} transaction(s) in {duration:.2f} seconds.")
 
-    with open(OUTPUT_JSON, "w") as f:
-        json.dump(results, f, indent=4)
+        # Save the results to JSON after processing each video.
+        os.makedirs(OUTPUT_DIR, exist_ok=True)
+        with open(OUTPUT_JSON, "w") as f:
+            json.dump(results, f, indent=4)
+        print(f"  Updated results saved to {OUTPUT_JSON}")
 
-    print(f"\nFinished. Saved to {OUTPUT_JSON.absolute()}")
+    print(f"\nFinished. All results are saved in {OUTPUT_JSON}")
 
 
 if __name__ == "__main__":
