@@ -1,0 +1,14 @@
+# Path to the root of your dataset folder, relative to the project root.
+# The path should be relative to the project's root directory (where you run the python command from).
+path: vending_dataset
+
+# Directories for training and validation images, relative to the 'path' above.
+train: images/train
+val: images/val
+
+# Class names. The order MUST match the order you used in your labeling tool.
+# The first class is 0, the second is 1, and so on.
+names:
+  0: card
+  1: box
+  # Add more classes if you have them

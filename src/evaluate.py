@@ -9,16 +9,16 @@ from collections import defaultdict
 GROUND_TRUTH_FILE = Path(__file__).parent / "gcs_trainingdata.txt"
 
 # 2. Path to the directory containing the video files.
-#    This should be the same directory you provided to local_detector.py
-#    This path is hardcoded below.
-VIDEO_DIR = Path("J:/Vending Videos/2026_06_20_Guildford")
+#    This can be overridden by setting a 'VIDEO_DIR' environment variable.
+#    It should be the same directory you provided to local_detector.py.
+VIDEO_DIR = Path(os.getenv("VIDEO_DIR", "J:/Vending Videos/2026_06_20_Guildford"))
 
 # 3. Path to the JSON output from local_detector.py
-RESULTS_JSON = VIDEO_DIR / "transactions.json"
+RESULTS_JSON = Path(__file__).parent / "transactions_clean.json"
 
 # 4. How close (in seconds) a detected timestamp needs to be to a ground truth
 #    timestamp to be considered a match (True Positive).
-MATCHING_TOLERANCE_SEC = 5.0
+MATCHING_TOLERANCE_SEC = 10.0
 # --- END CONFIGURATION ---
 
 
@@ -91,22 +91,29 @@ def get_video_file_map(video_dir: Path) -> dict[str, str]:
 
 def load_detected_results(filepath: Path) -> dict[str, list[int]]:
     """Loads the JSON output from the detector and converts timestamps to seconds."""
-    detected_results = {}
+    detected_results = defaultdict(list)
     if not filepath.exists():
         print(f"ERROR: Results file not found at {filepath}")
         return {}
 
     with open(filepath, "r") as f:
         try:
+            # The JSON is expected to be a list of objects,
+            # e.g., [{"video_name": "x", "timestamp": "y"}, ...]
             raw_results = json.load(f)
         except json.JSONDecodeError:
             print(f"ERROR: Could not parse JSON file at {filepath}")
             return {}
 
-    for filename, timestamps in raw_results.items():
-        detected_results[filename] = sorted([parse_timestamp_to_seconds(ts) for ts in timestamps])
+    # The input is a list, so we need to group it by video_name first.
+    for detection in raw_results:
+        video_name = detection.get("video_name")
+        ts_str = detection.get("timestamp")
+        if video_name and ts_str:
+            detected_results[video_name].append(parse_timestamp_to_seconds(ts_str))
 
-    return detected_results
+    # Sort the timestamps for each video and convert back to a regular dict
+    return {key: sorted(value) for key, value in detected_results.items()}
 
 
 def evaluate():

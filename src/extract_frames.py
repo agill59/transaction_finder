@@ -9,8 +9,8 @@ from collections import defaultdict
 GROUND_TRUTH_FILE = Path(__file__).parent / "gcs_trainingdata.txt"
 
 # 2. Path to the directory containing the video files.
-#    This path is hardcoded below.
-VIDEO_DIR = Path("J:/Vending Videos/2026_06_20_Guildford")
+#    This can be overridden by setting a 'VIDEO_DIR' environment variable.
+VIDEO_DIR = Path(os.getenv("VIDEO_DIR", "J:/Vending Videos/2026_06_20_Guildford"))
 
 # 3. Directory to save the extracted frames for labeling.
 #    This will be created in the project root (one level up from 'src').
