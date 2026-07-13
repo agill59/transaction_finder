@@ -31,8 +31,7 @@ def main():
         
     print(f"   - Source model: '{input_model_path}'")
     model = YOLO(input_model_path)
-    print("🚀 Exporting model to ONNX format (imgsz=2688, half=True)...")
-    exported_path = model.export(format="onnx", imgsz=2688, half=True, dynamic=True)
+    exported_path = model.export(format="onnx", imgsz=640, half=True, dynamic=True)
     shutil.move(str(exported_path), str(OUTPUT_MODEL_PATH))
     print(f"✅ Successfully exported and moved model to: '{OUTPUT_MODEL_PATH}'")
 

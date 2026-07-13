@@ -1,8 +1,0 @@
-train: ./images/train
-val: ./images/val
-
-# number of classes
-nc: 1
-
-# class names (Update 'card' to whatever class name you are actually using)
-names: ['card']

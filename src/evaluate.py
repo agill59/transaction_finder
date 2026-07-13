@@ -6,12 +6,12 @@ from collections import defaultdict
 
 # --- CONFIGURATION ---
 # 1. Path to your ground truth data file.
-GROUND_TRUTH_FILE = Path(__file__).parent / "gcs_trainingdata.txt"
+GROUND_TRUTH_FILE = Path(__file__).parent / "layover_trainingdata.txt"
 
 # 2. Path to the directory containing the video files.
 #    This can be overridden by setting a 'VIDEO_DIR' environment variable.
 #    It should be the same directory you provided to local_detector.py.
-VIDEO_DIR = Path(os.getenv("VIDEO_DIR", "J:/Vending Videos/2026_06_20_Guildford"))
+VIDEO_DIR = Path(os.getenv("VIDEO_DIR", "J:/Vending Videos/2026_07_05_Layover/"))
 
 # 3. Path to the JSON output from local_detector.py
 RESULTS_JSON = Path(__file__).parent / "transactions_clean.json"
@@ -39,7 +39,9 @@ def load_ground_truth(filepath: Path) -> dict[str, list[int]]:
     and a list of transaction timestamps in seconds.
     """
     ground_truth = defaultdict(list)
-    clip_num_pattern = re.compile(r"_(\d{4})_")
+    
+    # FIXED: Pattern now matches digits wrapped in underscores OR at the start/end of the string
+    clip_num_pattern = re.compile(r"(?:_|^)(\d{4})(?:_|$)")
 
     if not filepath.exists():
         print(f"ERROR: Ground truth file not found at {filepath}")
@@ -73,9 +75,8 @@ def get_video_file_map(video_dir: Path) -> dict[str, str]:
     (e.g., 'DJI_0001.MP4') found in the video directory.
     """
     file_map = {}
-    # This pattern specifically looks for a 4-digit number surrounded by
-    # underscores to correctly identify the clip number (e.g., "_0001_").
-    clip_num_pattern = re.compile(r"_(\d{4})_")
+    # FIXED: Uses the same flexible regex so it reliably catches clip numbers in disk filenames
+    clip_num_pattern = re.compile(r"(?:_|^)(\d{4})(?:_|$)")
 
     if not video_dir.is_dir():
         return {}
@@ -98,21 +99,17 @@ def load_detected_results(filepath: Path) -> dict[str, list[int]]:
 
     with open(filepath, "r") as f:
         try:
-            # The JSON is expected to be a list of objects,
-            # e.g., [{"video_name": "x", "timestamp": "y"}, ...]
             raw_results = json.load(f)
         except json.JSONDecodeError:
             print(f"ERROR: Could not parse JSON file at {filepath}")
             return {}
 
-    # The input is a list, so we need to group it by video_name first.
     for detection in raw_results:
         video_name = detection.get("video_name")
         ts_str = detection.get("timestamp")
         if video_name and ts_str:
             detected_results[video_name].append(parse_timestamp_to_seconds(ts_str))
 
-    # Sort the timestamps for each video and convert back to a regular dict
     return {key: sorted(value) for key, value in detected_results.items()}
 
 

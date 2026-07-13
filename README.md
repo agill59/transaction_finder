@@ -1,10 +1,10 @@
 # transaction_finder
-This project uses the YOLO-World model to detect custom objects in video files and flag the timestamps of their appearances. It's designed to automate the process of finding "transactions" or other events of interest in video footage. This version is optimized to run on AMD GPUs using ONNX and DirectML.
+This project uses a fine-tuned YOLOv8 model to detect custom objects in video files and flag the timestamps of their appearances. It's designed to automate the process of finding "transactions" or other events of interest in video footage. This version is set up to use fine-tuned models on AMD GPUs via ROCm.
 
 ## Prerequisites
 
 -   Python 3.8+
--   An AMD GPU with recent drivers that support DirectML.
+-   An AMD GPU with ROCm drivers installed.
 -   (Alternative) [Docker](https://www.docker.com/get-started) for CPU or NVIDIA GPU execution.
 
 ## Fine-Tuning for Higher Accuracy (Optional but Recommended)
@@ -49,22 +49,20 @@ You need a collection of images with your target objects labeled.
 
 ### 2. Train the Model
 
-Run the provided training script from within the `src` directory. This will use your dataset to fine-tune a standard `yolov8s` model. This process can take a long time and requires a powerful GPU for best results.
+Run the provided training script from your project's root directory. This will use your dataset to fine-tune a standard `yolov8s` model. This process can take a long time and requires a powerful GPU for best results.
 
 ```sh
-# Make sure your virtual environment is active and you are in the src directory
-cd src
-python train.py
+# Make sure your virtual environment is active and you are in the project root directory
+python src/train.py
 ```
 
 This will create a `runs/detect/train/` directory containing the results, including your new model: `runs/detect/train/weights/best.pt`.
 
-### 3. Bake the Model into ONNX
+### 3. Prepare the Final Model
 
-Convert your newly trained PyTorch model (`.pt`) into the fast and efficient ONNX format by running the `bake_onnx.py` script. It's pre-configured to find the output from the training step.
-
+This script takes the best model from your training run, moves it to the `src` directory, and cleans up the large training artifact folders. It's pre-configured to find the output from the training step.
 ```sh
-python bake_onnx.py
+python src/bake_model.py
 ```
 
 This will create a `yolov8s_finetuned.onnx` file in the `src` directory. You are now ready to run the main detector.
@@ -93,6 +91,63 @@ The new `src/evaluate.py` script performs this comparison.
     python src/evaluate.py
     ```
 The script will output the number of True Positives, False Positives, and False Negatives, along with Precision, Recall, and F1-Score. It will also provide hints on which parameters to adjust in `local_detector.py` to improve your score. You can then re-run the detector and the evaluation to see if your changes helped.
+
+### The Tuning Workflow
+
+When you adjust parameters in `local_detector.py` (like `CONF_BLURRY` or `MAX_AF_DELAY_SEC`), you must re-run the analysis to generate a new `transactions.json` file.
+
+By default, `local_detector.py` will **not** re-process videos that are already in the results file. To force a re-analysis with your new settings, use the `--force` flag:
+
+```sh
+# Re-run analysis, overwriting old results
+python src/local_detector.py --force
+```
+
+To see the live confidence scores the AI is producing (which is extremely helpful for tuning `CONF_BLURRY` and `CONF_CRISP`), use the `--debug` flag.
+
+```sh
+# Re-run analysis in debug mode to see live confidence scores
+python src/local_detector.py --force --debug
+```
+
+After the detector finishes, you can run `python src/evaluate.py` again to see if your metrics have improved. The `run_sequence` scripts have been updated to use the `--force` flag automatically.
+
+## Running Analysis on Multiple Directories
+
+The scripts (`local_detector.py`, `evaluate.py`, `extract_frames.py`) are configured to read the video directory from a `VIDEO_DIR` environment variable. This allows you to easily switch between different sets of videos without modifying the code.
+
+If the `VIDEO_DIR` variable is not set, it will default to `J:\Vending Videos\2026_06_20_Guildford`.
+
+**To run on a different directory for a single command:**
+
+-   **PowerShell:**
+    ```powershell
+    $env:VIDEO_DIR="J:\Vending Videos\2026_06_21_Coastal"
+    python src/local_detector.py
+    ```
+-   **Command Prompt:**
+    ```cmd
+    set VIDEO_DIR=J:\Vending Videos\2026_06_21_Coastal
+    python src/local_detector.py
+    ```
+
+### Automating a Sequence of Runs
+
+For convenience, scripts are provided in the project root to automate running the detector and evaluator on multiple directories. You can edit these files to customize the sequence.
+
+-   **On Windows (Command Prompt / PowerShell):**
+    ```shell
+    run_sequence.bat
+    ```
+-   **On Git Bash, Linux, or macOS:**
+    First, make the script executable:
+    ```sh
+    chmod +x run_sequence.sh
+    ```
+    Then run it from the project root:
+    ```sh
+    ./run_sequence.sh
+    ```
 
 ## Local Installation & Usage (Recommended for AMD GPUs)
 
@@ -129,19 +184,12 @@ The script will output the number of True Positives, False Positives, and False 
     
 6.  **Run the analysis:** After following the fine-tuning steps above, you can run the detector. It will use the `yolov8s_finetuned.onnx` model you created.
 
-    -   **Windows (Command Prompt):**
-        ```shell
-        python src/local_detector.py
-        ```
-    -   **Windows (PowerShell):**
-        ```shell
-        python src/local_detector.py
-        ```
-    -   **Linux/macOS:**
-        ```shell
-        python src/local_detector.py
-        ```
-    The script will use your AMD GPU automatically via DirectML. Results are saved to `transactions.json` in your video directory.
+    By default, the scripts will run on the `Guildford` video set. To run on different directories or automate a sequence of runs, see the **"Running Analysis on Multiple Directories"** section above.
+    ```shell
+    # Run the detector on the default directory
+    python src/local_detector.py # Use 'python src/local_detector.py --force --debug' to tune
+    ```
+    The script will use your AMD GPU automatically via DirectML. Results are saved to `transactions.json` in the active video directory.
 
 ## Docker Usage (CPU / NVIDIA GPU)
 

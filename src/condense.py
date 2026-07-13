@@ -5,7 +5,7 @@ def time_to_seconds(time_str):
     m, s = map(int, time_str.split(':'))
     return m * 60 + s
 
-def clean_transactions(input_file="transactions.json", output_file="transactions_clean.json", threshold_seconds=3):
+def clean_transactions(input_file="src/transactions.json", output_file="src/transactions_clean.json", threshold_seconds=5):
     # 1. Load the raw data
     try:
         with open(input_file, 'r') as f:

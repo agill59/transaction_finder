@@ -44,8 +44,8 @@ for folder_name in SOURCE_FOLDERS:
         print(f"Warning: Could not find folder {folder_path}")
         continue
         
-    # Find all .bmp files in this folder
-    image_files = list(folder_path.glob("*.BMP")) + list(folder_path.glob("*.bmp"))
+    # Find all .bmp and .jpg files in this folder
+    image_files = list(folder_path.glob("*.BMP")) + list(folder_path.glob("*.bmp")) + list(folder_path.glob("*.jpg"))
     
     for img_path in image_files:
         # Check for a matching .txt label file
